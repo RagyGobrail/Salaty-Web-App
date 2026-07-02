@@ -1,0 +1,6 @@
+{
+  "name": "صلاتي",
+  "description": "تطبيق تفاعلي لتشجيع الأطفال في الكنيسة على الصلاة اليومية ومتابعة سلاسل صلواتهم بطريقة ممتعة",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
