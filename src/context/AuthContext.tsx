@@ -203,45 +203,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signUpWithEmail = async (
-  email: string,
-  pass: string,
-  name: string,
-  isServant?: boolean
-) => {
-  setLoading(true);
+  const signUpWithEmail = async (email: string, pass: string, name: string, isServant?: boolean) => {
+    setLoading(true);
+    try {
+      const result = await createUserWithEmailAndPassword(auth, email, pass);
+      // Set the registering ref immediately to lock onAuthStateChanged listener out of race condition syncs
+      registeringUid.current = result.user.uid;
+      
+      // Update display name in firebase auth profile
+      await updateProfile(result.user, { displayName: name });
+      
+      const appUser = await syncUserDoc(result.user, name, isServant);
+      setUser(appUser);
 
-  try {
-    console.log("STEP 1");
-
-    const result = await createUserWithEmailAndPassword(auth, email, pass);
-
-    console.log("STEP 2");
-
-    registeringUid.current = result.user.uid;
-
-    await updateProfile(result.user, {
-      displayName: name,
-    });
-
-    console.log("STEP 3");
-
-    const appUser = await syncUserDoc(result.user, name, isServant);
-
-    console.log("STEP 4");
-
-    setUser(appUser);
-
-    console.log("STEP 5");
-
-  } catch (e) {
-    console.error("SIGNUP FAILED", e);
-    throw e;
-  } finally {
-    registeringUid.current = null;
-    setLoading(false);
-  }
-};
+      if (isServant) {
+        // Send email notification to admin asynchronously
+        sendServantSignupEmail(name, email).catch(err => {
+          console.error("Failed to send servant registration email:", err);
+        });
+      }
+    } catch (error) {
+      console.error("Email signup failed:", error);
+      throw error;
+    } finally {
+      registeringUid.current = null;
+      setLoading(false);
+    }
+  };
 
   const loginAnonymously = async (name: string) => {
     setLoading(true);
