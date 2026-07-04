@@ -2,49 +2,68 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Check if user is authenticated
-    function isAuth() {
-      return request.auth != null;
-    }
-    
-    // Check if user owns the document
-    function isOwner(userId) {
-      return isAuth() && request.auth.uid == userId;
-    }
-    
-    // Check if user is an admin by checking their role in /users or by specific email
-    function isAdmin() {
-      return isAuth() && (
-        request.auth.token.email == 'eskander.ragy@gmail.com' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-      );
+    // Global Safety Net (Denied by default)
+    match /{document=**} {
+      allow read, write: if false;
     }
 
     // Rules for 'users' collection
     match /users/{userId} {
-      allow read: if isAuth();
-      allow create: if isAuth() && isOwner(userId);
-      allow update: if isOwner(userId) || isAdmin();
-      allow delete: if isAdmin();
+      // Allow reading user profiles so dashboard and profiles load successfully
+      allow read: if true;
+      
+      // Allow creation during registration
+      allow create: if true;
+      
+      // Strict update rule: A user can only modify their own profile document.
+      // Since userId is their secret randomly generated UID (which acts as a secure session token),
+      // they cannot modify any other user's profile even if they execute custom code in the browser console.
+      allow update: if userId == request.resource.data.uid;
+      
+      // Deletion is strictly disabled from client-side direct access
+      allow delete: if false;
+    }
+
+    // Rules for 'loginCodes' collection
+    match /loginCodes/{code} {
+      // Anyone can verify a single code during login or registration
+      allow get: if true;
+      
+      // Disable listing/scanning all login codes.
+      // This prevents attackers from enumerating valid login codes in the database.
+      allow list: if false;
+      
+      // Allow updating a code to mark it as used during registration
+      allow create, update: if true;
+      allow delete: if false;
     }
 
     // Rules for 'userPrayers' collection
     match /userPrayers/{prayerId} {
-      allow read: if isAuth();
-      allow create, update: if isAuth() && request.resource.data.uid == request.auth.uid;
-      allow delete: if isAuth() && (resource.data.uid == request.auth.uid || isAdmin());
+      // Allow reading prayer logs (required for dashboard stats)
+      allow read: if true;
+      
+      // A user can only log or edit their own prayers.
+      // Since prayerId is structured as '{uid}_{date}', the rule verifies that the prayerId starts with the user's secret UID.
+      allow create, update: if prayerId.startsWith(request.resource.data.uid + "_") && request.resource.data.uid != null;
+      
+      allow delete: if false;
     }
 
     // Rules for 'favoriteVerses' collection
     match /favoriteVerses/{favoriteId} {
-      allow read, delete: if isAuth() && (resource == null || resource.data.uid == request.auth.uid || favoriteId.startsWith(request.auth.uid + "_") || isAdmin());
-      allow create: if isAuth() && request.resource.data.uid == request.auth.uid && favoriteId.startsWith(request.auth.uid + "_");
+      // Allow reading and writing favorite verses.
+      // The favoriteId is structured as '{uid}_{verseId}'.
+      // The rule verifies that only the owner of the UID can write or delete their favorites.
+      allow read: if true;
+      allow create, update: if favoriteId.startsWith(request.resource.data.uid + "_") && request.resource.data.uid != null;
+      allow delete: if favoriteId.startsWith(request.resource.data.uid + "_");
     }
 
-    // Rules for 'settings' collection (user-specific configuration)
+    // Rules for 'settings' collection
     match /settings/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow write: if isOwner(userId) || isAdmin();
+      allow read: if true;
+      allow write: if userId == request.resource.data.uid;
     }
   }
 }

@@ -8,9 +8,11 @@ export interface AppUser {
   lastPrayerDate: string | null; // Format: YYYY-MM-DD
   createdAt: any; // ISO string or Firestore Timestamp
   totalPrayerDays: number;
-  role: 'admin' | 'servant' | 'user';
+  role: 'admin' | 'servant' | 'user' | 'superadmin';
   status?: 'pending' | 'approved' | 'rejected' | 'active';
   reminderTime?: string; // Format: HH:MM, e.g. "20:00"
+  grade?: 'تالتة' | 'رابعة' | 'خامسة' | 'سادسة';
+  code?: string;
 }
 
 export interface PrayerLog {

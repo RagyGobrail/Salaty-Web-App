@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "App user profile, can be a child, servant, or admin",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "servant", "admin", "superadmin"] },
+        "grade": { "type": "string", "enum": ["تالتة", "رابعة", "خامسة", "سادسة"] },
+        "code": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "currentStreak": { "type": "integer" },
+        "longestStreak": { "type": "integer" },
+        "totalPrayerDays": { "type": "integer" },
+        "lastPrayerDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "active"] },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["uid", "name", "role", "code", "createdAt"]
+    },
+    "LoginCode": {
+      "title": "Login Code",
+      "description": "Unique registration and login codes",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "servant", "admin"] },
+        "isUsed": { "type": "boolean" },
+        "usedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "usedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "role", "isUsed", "createdAt"]
+    },
+    "UserPrayer": {
+      "title": "User Prayer Log",
+      "description": "A daily log of user prayers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "date", "timestamp"]
+    },
+    "FavoriteVerse": {
+      "title": "Favorite Verse",
+      "description": "Saved favorite verses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "text": { "type": "string" },
+        "reference": { "type": "string" },
+        "mood": { "type": "string" },
+        "savedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "text", "reference", "savedAt"]
+    },
+    "UserSetting": {
+      "title": "User Setting",
+      "description": "Individual user configurations",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "reminderTime": { "type": "string" }
+      },
+      "required": ["uid", "reminderTime"]
+    }
+  },
+  "firestore": {
+    "users/{uid}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "loginCodes/{code}": {
+      "schema": "LoginCode",
+      "description": "Pre-generated login codes"
+    },
+    "userPrayers/{prayerId}": {
+      "schema": "UserPrayer",
+      "description": "User prayer records"
+    },
+    "favoriteVerses/{verseId}": {
+      "schema": "FavoriteVerse",
+      "description": "Saved favorite verses"
+    },
+    "settings/{uid}": {
+      "schema": "UserSetting",
+      "description": "User reminder settings"
+    }
+  }
+}

@@ -10,6 +10,7 @@ import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import versesData from '../data/verses.json';
 import { Verse, MoodConfig } from '../types';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const getSafeFavoriteId = (uid: string, text: string) => {
   const encoded = btoa(unescape(encodeURIComponent(text)));
@@ -19,10 +20,30 @@ const getSafeFavoriteId = (uid: string, text: string) => {
 
 export const Home: React.FC = () => {
   const { user, loading, recordPrayerToday } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  
   const [completedDays, setCompletedDays] = useState<Record<string, boolean>>({});
   const [loadingWeek, setLoadingWeek] = useState(true);
   const [recording, setRecording] = useState(false);
   const [showAnimation, setShowAnimation] = useState(false);
+  
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+    const timer = setTimeout(() => {
+      setToast(null);
+    }, 3500);
+    return () => clearTimeout(timer);
+  };
+
+  useEffect(() => {
+    if (location.state?.message) {
+      showToast(location.state.message, 'success');
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location, navigate]);
   const [quote, setQuote] = useState<string>('');
 
   // Mood & Verse of the Day State
@@ -319,7 +340,7 @@ export const Home: React.FC = () => {
   const alreadyPrayedToday = completedDays[todayStr] || user?.lastPrayerDate === todayStr;
 
   if (user?.role === 'servant') {
-    const isApproved = user.status === 'approved';
+    const isApproved = user.status === 'approved' || user.status === 'active';
     const isRejected = user.status === 'rejected';
     const isPending = !user.status || user.status === 'pending';
 
@@ -475,7 +496,7 @@ export const Home: React.FC = () => {
             <div className="absolute -top-10 -right-10 w-40 h-40 bg-orange-400/5 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-blue-400/5 rounded-full blur-3xl pointer-events-none" />
 
-            <h2 className="text-3xl font-black text-white">هل صليت اليوم؟</h2>
+            <h2 className="text-3xl font-black text-white">صليت النهاردة؟</h2>
             
             <AnimatePresence mode="wait">
               {alreadyPrayedToday ? (
@@ -489,7 +510,7 @@ export const Home: React.FC = () => {
                   <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mb-4">
                     <Check className="w-9 h-9 text-emerald-400" />
                   </div>
-                  <h4 className="text-xl font-bold text-emerald-400 mb-1">أحسنت جداً! صليت اليوم</h4>
+                  <h4 className="text-xl font-bold text-emerald-400 mb-1">حلو جداً! صليت النهاردة</h4>
                   <p className="text-xs text-[#B8C7E0]/80">لقد سجلت صلاتك اليومية بنجاح يا بطل 🛡️❤️</p>
                 </motion.div>
               ) : (
@@ -520,7 +541,7 @@ export const Home: React.FC = () => {
           
           {/* Mood Selector card */}
           <div className="glass-card p-6 flex flex-col gap-4">
-            <h3 className="text-md font-bold text-[#B8C7E0] border-b border-white/10 pb-2 text-right">كيف تشعر اليوم؟</h3>
+            <h3 className="text-md font-bold text-[#B8C7E0] border-b border-white/10 pb-2 text-right">عامل ايه النهاردة؟</h3>
             <div className="grid grid-cols-3 gap-2">
               {moods.map((mood) => {
                 const isSelected = selectedMood === mood.id;
@@ -763,6 +784,26 @@ export const Home: React.FC = () => {
                 حسناً، سأواصل البهجة! 🌟
               </motion.button>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Custom Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -50, scale: 0.9 }}
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 p-4 rounded-2xl shadow-xl flex items-center gap-3 border backdrop-blur-md text-right font-sans"
+            style={{
+              backgroundColor: toast.type === 'success' ? 'rgba(11, 37, 69, 0.95)' : toast.type === 'error' ? 'rgba(45, 15, 21, 0.95)' : 'rgba(7, 20, 38, 0.95)',
+              borderColor: toast.type === 'success' ? '#F39C3D' : toast.type === 'error' ? '#f43f5e' : '#3b82f6',
+            }}
+          >
+            <span className="text-sm font-black text-white">
+              {toast.message}
+            </span>
           </motion.div>
         )}
       </AnimatePresence>

@@ -9,10 +9,13 @@ import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { FavoriteVerse } from '../types';
 import { formatArabicDate } from '../utils/dateUtils';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 export const Profile: React.FC = () => {
   const { user, logout, refreshUser } = useAuth();
-  const isLeader = user?.role === 'admin' || user?.role === 'superadmin' || user?.email === 'eskander.ragy@gmail.com' || (user?.role === 'servant' && user?.status === 'approved');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isLeader = user?.role === 'admin' || user?.role === 'superadmin' || user?.email === 'eskander.ragy@gmail.com' || (user?.role === 'servant' && (user?.status === 'approved' || user?.status === 'active'));
   const [favorites, setFavorites] = useState<FavoriteVerse[]>([]);
   const [loadingFavs, setLoadingFavs] = useState(true);
 
@@ -35,6 +38,14 @@ export const Profile: React.FC = () => {
     }, 3500);
     return () => clearTimeout(timer);
   };
+
+  useEffect(() => {
+    if (location.state?.message) {
+      showToast(location.state.message, 'success');
+      // Clear location state so toast is not re-rendered on reload
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location, navigate]);
 
   useEffect(() => {
     if (user) {
@@ -220,10 +231,29 @@ export const Profile: React.FC = () => {
             />
             <div>
               <div className="inline-block py-1 px-3 bg-orange-500/10 text-[#F39C3D] border border-orange-500/20 rounded-full text-xs font-black mb-2">
-                {isLeader ? "خادم كنيسة معتمد 🛡️" : "بطل صلاة متميز 🛡️"}
+                {user?.role === 'superadmin' ? "خادم رئيسي 👑 (Super Admin)" : user?.role === 'admin' ? "خادم (Admin)" : user?.role === 'servant' ? "خادم" : "بطل صلاة متميز 🛡️"}
               </div>
               <h2 className="text-3xl font-black text-white">{user?.name}</h2>
-              <p className="text-sm text-[#B8C7E0] mt-1 font-medium ltr">{user?.email || 'حساب زائر سريع'}</p>
+              {user?.code && (
+                <div className="flex items-center gap-2 mt-2 bg-[#071426]/50 px-3 py-1.5 rounded-xl border border-white/5 w-fit mx-auto sm:mx-0">
+                  <span className="text-xs text-[#B8C7E0]">كود الدخول الخاص بك:</span>
+                  <span className="font-mono font-black text-sm text-[#F39C3D] tracking-wider">{user.code}</span>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(user.code || '');
+                      showToast("تم نسخ كود الدخول الخاص بك! 📋", 'success');
+                    }}
+                    className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white transition cursor-pointer"
+                    title="نسخ الكود"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              {user?.email && (
+                <p className="text-sm text-[#B8C7E0] mt-1 font-medium ltr">{user.email}</p>
+              )}
               
               <div className="flex items-center gap-2 mt-4 text-xs text-[#B8C7E0] justify-center sm:justify-start">
                 <Calendar className="w-4 h-4 text-[#F39C3D]" />
@@ -240,26 +270,24 @@ export const Profile: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row md:flex-col lg:flex-row gap-3 w-full sm:w-auto">
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+          <div className="flex flex-col sm:flex-row md:flex-col lg:flex-row gap-3 w-full sm:w-auto relative z-30">
+            <button
+              type="button"
               onClick={() => setIsEditingProfile(!isEditingProfile)}
-              className="px-5 py-3 bg-[#0E3D75] hover:bg-[#0E3D75]/80 border border-[#F39C3D]/20 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer duration-300"
+              className="px-5 py-3 bg-[#0E3D75] hover:bg-[#0E3D75]/80 active:scale-[0.98] border border-[#F39C3D]/20 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 relative z-30"
             >
               <Edit className="w-4 h-4 text-[#F39C3D]" />
               <span>تعديل الحساب</span>
-            </motion.button>
+            </button>
 
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={logout}
-              className="px-5 py-3 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-300 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer duration-300"
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="px-5 py-3 bg-rose-500/10 hover:bg-rose-500/20 active:scale-[0.98] border border-rose-500/20 text-rose-300 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 relative z-30"
             >
               <LogOut className="w-4 h-4" />
               <span>تسجيل الخروج</span>
-            </motion.button>
+            </button>
           </div>
         </div>
 

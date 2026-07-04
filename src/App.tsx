@@ -42,8 +42,8 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  // Allow email and role 'admin'
-  const isAuthorized = user && (user.role === 'admin' || user.email === 'eskander.ragy@gmail.com');
+  // Allow email and role 'admin' / 'superadmin'
+  const isAuthorized = user && (user.role === 'admin' || user.role === 'superadmin' || user.email === 'eskander.ragy@gmail.com');
 
   if (!isAuthorized) {
     return <Navigate to="/dashboard" replace />;
@@ -57,7 +57,7 @@ const MainLayout: React.FC = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
 
-  const isLeader = user?.role === 'admin' || user?.role === 'superadmin' || user?.email === 'eskander.ragy@gmail.com' || (user?.role === 'servant' && user?.status === 'approved');
+  const isLeader = user?.role === 'admin' || user?.role === 'superadmin' || user?.email === 'eskander.ragy@gmail.com' || (user?.role === 'servant' && (user?.status === 'approved' || user?.status === 'active'));
 
   const navItems = isLeader
     ? [

@@ -1,277 +1,374 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
-  signInAnonymously as firebaseSignInAnonymously,
-  signOut, 
-  User as FirebaseUser,
-  updateProfile,
-  sendPasswordResetEmail
-} from 'firebase/auth';
+/// <reference types="vite/client" />
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { 
   doc, 
   getDoc, 
   setDoc, 
   updateDoc, 
   collection, 
-  addDoc, 
   query, 
   where, 
   getDocs,
   runTransaction,
   serverTimestamp
 } from 'firebase/firestore';
-import { auth, googleProvider, db } from '../lib/firebase';
-import { AppUser, PrayerLog } from '../types';
+import { db } from '../lib/firebase';
+import { AppUser } from '../types';
 import { getLocalDateString, getYesterdayDateString } from '../utils/dateUtils';
-import { sendServantSignupEmail } from '../utils/emailService';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: localStorage.getItem('prayer_app_code'),
+      email: null
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// Generate random code for Child, Servant or Admin
+export const generateRandomCode = (prefix: 'MKD' | 'KHD' | 'ADM'): string => {
+  const allowedChars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // No O, 0, I, 1 to prevent confusion
+  let randomPart = '';
+  for (let i = 0; i < 5; i++) {
+    randomPart += allowedChars.charAt(Math.floor(Math.random() * allowedChars.length));
+  }
+  return `${prefix}-${randomPart}`;
+};
 
 interface AuthContextType {
   user: AppUser | null;
-  firebaseUser: FirebaseUser | null;
   loading: boolean;
-  signInWithGoogle: () => Promise<void>;
-  signInWithEmail: (email: string, pass: string) => Promise<void>;
-  signUpWithEmail: (email: string, pass: string, name: string, isServant?: boolean) => Promise<void>;
-  loginAnonymously: (name: string) => Promise<void>;
+  hasNoAdmins: boolean;
+  loginWithCode: (code: string) => Promise<{ success: boolean; isFirstLogin: boolean; role?: 'user' | 'servant' | 'admin'; user?: AppUser }>;
+  completeRegistration: (code: string, name: string, grade?: 'تالتة' | 'رابعة' | 'خامسة' | 'سادسة') => Promise<AppUser>;
+  setupFirstAdmin: (name: string, setupKey: string) => Promise<AppUser>;
   logout: () => Promise<void>;
   recordPrayerToday: () => Promise<{ success: boolean; newStreak: number; alreadyPrayed: boolean }>;
   refreshUser: () => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AppUser | null>(null);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const registeringUid = useRef<string | null>(null);
+  const [hasNoAdmins, setHasNoAdmins] = useState(false);
 
-  // Sync / check streak from loaded user
-  const syncUserDoc = async (fUser: FirebaseUser, displayNameInput?: string, isServant?: boolean): Promise<AppUser> => {
-    const userRef = doc(db, 'users', fUser.uid);
-    const docSnap = await getDoc(userRef);
-    const todayStr = getLocalDateString();
-    const yesterdayStr = getYesterdayDateString(todayStr);
-
-    let finalUser: AppUser;
-
-    if (!docSnap.exists()) {
-      // Determine if they should be admin based on email
-      const email = fUser.email || '';
-      const isAdminEmail = email.toLowerCase() === 'eskander.ragy@gmail.com';
+  // Sync and load user from code
+  const loadUserByCode = async (code: string): Promise<AppUser | null> => {
+    try {
+      const q = query(collection(db, 'users'), where('code', '==', code));
+      const querySnap = await getDocs(q);
       
-      // We set status to "pending" for servants, or "active" for normal users/admins (never undefined)
-      const newUserData = {
-        uid: fUser.uid,
-        name: displayNameInput || fUser.displayName || 'طفل صلاتي',
-        email: email,
-        photoURL: fUser.photoURL || `https://api.dicebear.com/7.x/fun-emoji/svg?seed=${fUser.uid}`,
+      if (!querySnap.empty) {
+        const userDoc = querySnap.docs[0];
+        const data = userDoc.data() as AppUser;
+
+        // Check and sync streak
+        const todayStr = getLocalDateString();
+        const yesterdayStr = getYesterdayDateString(todayStr);
+        let updatedStreak = data.currentStreak || 0;
+        
+        if (data.lastPrayerDate && data.lastPrayerDate !== todayStr && data.lastPrayerDate !== yesterdayStr) {
+          updatedStreak = 0;
+          const userRef = doc(db, 'users', userDoc.id);
+          await updateDoc(userRef, { currentStreak: 0 });
+          data.currentStreak = 0;
+        }
+
+        return {
+          ...data,
+          currentStreak: updatedStreak
+        };
+      }
+      return null;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, `users_by_code_${code}`);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    const initAuth = async () => {
+      try {
+        const storedCode = localStorage.getItem('prayer_app_code');
+        if (storedCode) {
+          const appUser = await loadUserByCode(storedCode);
+          if (active) {
+            if (appUser) {
+              setUser(appUser);
+            } else {
+              localStorage.removeItem('prayer_app_code');
+              setUser(null);
+            }
+          }
+        } else {
+          if (active) {
+            setUser(null);
+          }
+        }
+      } catch (error) {
+        console.error("Auth initialization failed:", error);
+        if (active) {
+          setUser(null);
+        }
+      }
+
+      // Check if there are no admin users in Firestore for the one-time admin setup screen
+      try {
+        const adminQuery = query(collection(db, 'users'), where('role', 'in', ['admin', 'superadmin']));
+        const adminSnap = await getDocs(adminQuery);
+        if (active) {
+          setHasNoAdmins(adminSnap.empty);
+        }
+      } catch (err) {
+        console.error("Failed to query admin status:", err);
+      }
+
+      if (active) {
+        setLoading(false);
+      }
+    };
+
+    initAuth();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const refreshUser = async () => {
+    const storedCode = localStorage.getItem('prayer_app_code');
+    if (storedCode) {
+      const appUser = await loadUserByCode(storedCode);
+      if (appUser) {
+        setUser(appUser);
+      }
+    }
+  };
+
+  const loginWithCode = async (code: string): Promise<{ success: boolean; isFirstLogin: boolean; role?: 'user' | 'servant' | 'admin'; user?: AppUser }> => {
+    setLoading(true);
+    try {
+      const formattedCode = code.trim().toUpperCase();
+      if (!formattedCode) {
+        throw new Error('يرجى إدخال كود تسجيل الدخول الخاص بك!');
+      }
+
+      const codeRef = doc(db, 'loginCodes', formattedCode);
+      const codeSnap = await getDoc(codeRef);
+      if (!codeSnap.exists()) {
+        throw new Error('الكود غير صالح!');
+      }
+      const codeData = codeSnap.data();
+
+      const q = query(collection(db, 'users'), where('code', '==', formattedCode));
+      const querySnap = await getDocs(q);
+
+      if (!querySnap.empty) {
+        // Returning User!
+        const userDoc = querySnap.docs[0];
+        const data = userDoc.data() as AppUser;
+
+        localStorage.setItem('prayer_app_code', formattedCode);
+
+        const todayStr = getLocalDateString();
+        const yesterdayStr = getYesterdayDateString(todayStr);
+        let updatedStreak = data.currentStreak || 0;
+        if (data.lastPrayerDate && data.lastPrayerDate !== todayStr && data.lastPrayerDate !== yesterdayStr) {
+          updatedStreak = 0;
+          const userRef = doc(db, 'users', userDoc.id);
+          await updateDoc(userRef, { currentStreak: 0 });
+          data.currentStreak = 0;
+        }
+
+        const finalUserObj: AppUser = {
+          ...data,
+          currentStreak: updatedStreak
+        };
+
+        setUser(finalUserObj);
+        setLoading(false);
+
+        return { success: true, isFirstLogin: false, role: data.role as any, user: finalUserObj };
+      } else {
+        const codeRole = codeData.role;
+        setLoading(false);
+        return { success: true, isFirstLogin: true, role: codeRole };
+      }
+    } catch (error: any) {
+      setLoading(false);
+      throw error;
+    }
+  };
+
+  const completeRegistration = async (
+    code: string,
+    name: string,
+    grade?: 'تالتة' | 'رابعة' | 'خامسة' | 'سادسة'
+  ): Promise<AppUser> => {
+    if (!name.trim()) {
+      throw new Error('يرجى إدخال اسمك بالكامل لإنشاء ملفك الشخصي!');
+    }
+    const formattedCode = code.trim().toUpperCase();
+
+    setLoading(true);
+    try {
+      const codeRef = doc(db, 'loginCodes', formattedCode);
+      const codeSnap = await getDoc(codeRef);
+      if (!codeSnap.exists()) {
+        throw new Error('الكود غير صالح!');
+      }
+      const codeData = codeSnap.data();
+      if (codeData.isUsed) {
+        throw new Error('هذا الكود تم استخدامه من قبل!');
+      }
+
+      const newUid = 'usr_' + Math.random().toString(36).substring(2, 15) + '_' + Date.now();
+      const role = codeData.role === 'user' ? 'user' : (codeData.role === 'servant' ? 'servant' : 'admin');
+      const userRef = doc(db, 'users', newUid);
+
+      const newUserData: AppUser = {
+        uid: newUid,
+        name: name.trim(),
+        email: '',
+        photoURL: `https://api.dicebear.com/7.x/fun-emoji/svg?seed=${newUid}`,
         currentStreak: 0,
         longestStreak: 0,
         totalPrayerDays: 0,
         lastPrayerDate: null,
-        status: isServant ? 'pending' : 'active',
+        status: role === 'servant' ? 'approved' : 'active',
         createdAt: serverTimestamp(),
-        role: isAdminEmail ? 'admin' : (isServant ? 'servant' : 'user')
+        role: role,
+        code: formattedCode
       };
-      
-      // Before writing, remove any undefined fields to comply with Firestore rules and constraints
-      const cleanedData = Object.fromEntries(
-        Object.entries(newUserData).filter(([_, value]) => value !== undefined)
-      );
-      
-      await setDoc(userRef, cleanedData, { merge: true });
-      
-      // Provide a clean client-side state mapping for the newly created user doc
-      finalUser = {
+
+      if (grade && (role === 'user' || role === 'servant')) {
+        newUserData.grade = grade;
+      }
+
+      await setDoc(userRef, newUserData);
+
+      await updateDoc(codeRef, {
+        isUsed: true,
+        usedBy: newUid,
+        usedAt: serverTimestamp()
+      });
+
+      localStorage.setItem('prayer_app_code', formattedCode);
+
+      const loadedUser: AppUser = {
         ...newUserData,
-        status: newUserData.status as any,
-        createdAt: new Date().toISOString() // Use a string ISO value for immediate client-side UI consumption
-      } as AppUser;
-    } else {
-      const data = docSnap.data() as AppUser;
-      
-      // Check if streak is broken
-      // If lastPrayerDate is not null, not today, and not yesterday, reset currentStreak to 0
-      let updatedStreak = data.currentStreak || 0;
-      if (data.lastPrayerDate && data.lastPrayerDate !== todayStr && data.lastPrayerDate !== yesterdayStr) {
-        updatedStreak = 0;
-        await updateDoc(userRef, { currentStreak: 0 });
-      }
-      
-      // Fix authentication race conditions: if this function was called concurrently (e.g., from signup or onAuthStateChanged),
-      // we must merge any missing or updated credentials (like custom names or servant status) into the document
-      let needsUpdate = false;
-      const updatedFields: Partial<AppUser> = {};
-
-      if (displayNameInput && (!data.name || data.name === 'طفل صلاتي' || data.name !== displayNameInput)) {
-        updatedFields.name = displayNameInput;
-        needsUpdate = true;
-      }
-      if (isServant && data.role !== 'servant' && data.role !== 'admin') {
-        updatedFields.role = 'servant';
-        updatedFields.status = 'pending';
-        needsUpdate = true;
-      }
-
-      if (needsUpdate) {
-        const cleanedFields = Object.fromEntries(
-          Object.entries(updatedFields).filter(([_, value]) => value !== undefined)
-        );
-        await updateDoc(userRef, cleanedFields);
-      }
-      
-      finalUser = {
-        status: data.status || 'active', // Default fallback status if undefined on historical doc
-        ...data,
-        ...updatedFields,
-        currentStreak: updatedStreak,
-        // Make sure admin gets updated role if needed
-        role: (fUser.email?.toLowerCase() === 'eskander.ragy@gmail.com') ? 'admin' : (updatedFields.role || data.role || 'user')
+        createdAt: new Date().toISOString()
       };
-    }
-    
-    return finalUser;
-  };
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
-      setFirebaseUser(fUser);
-      if (fUser) {
-        // If we are currently registering/signing up this specific user, let the signUpWithEmail/loginAnonymously
-        // trigger the initial sync and state set to avoid concurrent state and Firestore conflicts!
-        if (registeringUid.current === fUser.uid) {
-          return;
-        }
-        try {
-          const appUser = await syncUserDoc(fUser);
-          if (registeringUid.current !== fUser.uid) {
-            setUser(appUser);
-          }
-        } catch (error) {
-          console.error("Error syncing user document on auth state change:", error);
-        }
-      } else {
-        setUser(null);
-      }
+      setUser(loadedUser);
       setLoading(false);
-    });
 
-    return () => unsubscribe();
-  }, []);
-
-  const refreshUser = async () => {
-    if (auth.currentUser) {
-      try {
-        const appUser = await syncUserDoc(auth.currentUser);
-        setUser(appUser);
-      } catch (error) {
-        console.error("Failed to refresh user:", error);
-      }
+      return loadedUser;
+    } catch (error: any) {
+      setLoading(false);
+      handleFirestoreError(error, OperationType.WRITE, `users_registration_${code}`);
+      throw error;
     }
   };
 
-  const signInWithGoogle = async () => {
+  const setupFirstAdmin = async (name: string, setupKey: string): Promise<AppUser> => {
+    if (!name.trim() || !setupKey.trim()) {
+      throw new Error('يرجى ملء جميع الحقول المطلوبة!');
+    }
+    const correctKey = import.meta.env.VITE_ADMIN_SETUP_KEY || 'church-admin-123';
+    if (setupKey !== correctKey) {
+      throw new Error('مفتاح الإعداد السري غير صحيح!');
+    }
+
     setLoading(true);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const appUser = await syncUserDoc(result.user);
-      setUser(appUser);
-    } catch (error) {
-      console.error("Google login failed:", error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
+      const firstAdminCode = generateRandomCode('ADM');
 
-  const signInWithEmail = async (email: string, pass: string) => {
-    setLoading(true);
-    try {
-      const result = await signInWithEmailAndPassword(auth, email, pass);
-      const appUser = await syncUserDoc(result.user);
-      setUser(appUser);
-    } catch (error) {
-      console.error("Email sign-in failed:", error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
+      const newUid = 'usr_' + Math.random().toString(36).substring(2, 15) + '_' + Date.now();
+      const userRef = doc(db, 'users', newUid);
 
-  const signUpWithEmail = async (email: string, pass: string, name: string, isServant?: boolean) => {
-    setLoading(true);
-    try {
-      const result = await createUserWithEmailAndPassword(auth, email, pass);
-      // Set the registering ref immediately to lock onAuthStateChanged listener out of race condition syncs
-      registeringUid.current = result.user.uid;
-      
-      // Update display name in firebase auth profile
-      await updateProfile(result.user, { displayName: name });
-      
-      const appUser = await syncUserDoc(result.user, name, isServant);
-      setUser(appUser);
+      const adminData: AppUser = {
+        uid: newUid,
+        name: name.trim(),
+        email: 'eskander.ragy@gmail.com',
+        photoURL: `https://api.dicebear.com/7.x/fun-emoji/svg?seed=${newUid}`,
+        currentStreak: 0,
+        longestStreak: 0,
+        totalPrayerDays: 0,
+        lastPrayerDate: null,
+        status: 'active',
+        createdAt: serverTimestamp(),
+        role: 'superadmin' as const,
+        code: firstAdminCode
+      };
 
-      if (isServant) {
-        // Send email notification to admin asynchronously
-        sendServantSignupEmail(name, email).catch(err => {
-          console.error("Failed to send servant registration email:", err);
-        });
-      }
-    } catch (error) {
-      console.error("Email signup failed:", error);
-      throw error;
-    } finally {
-      registeringUid.current = null;
-      setLoading(false);
-    }
-  };
+      await setDoc(userRef, adminData);
 
-  const loginAnonymously = async (name: string) => {
-    setLoading(true);
-    try {
-      const result = await firebaseSignInAnonymously(auth);
-      registeringUid.current = result.user.uid;
-      
-      await updateProfile(result.user, { displayName: name });
-      const appUser = await syncUserDoc(result.user, name);
-      setUser(appUser);
-    } catch (error) {
-      console.error("Anonymous login failed:", error);
-      throw error;
-    } finally {
-      registeringUid.current = null;
+      await setDoc(doc(db, 'loginCodes', firstAdminCode), {
+        code: firstAdminCode,
+        role: 'admin',
+        isUsed: true,
+        usedBy: newUid,
+        createdAt: serverTimestamp(),
+        usedAt: serverTimestamp()
+      });
+
+      localStorage.setItem('prayer_app_code', firstAdminCode);
+
+      const loadedAdmin: AppUser = {
+        ...adminData,
+        createdAt: new Date().toISOString()
+      };
+
+      setUser(loadedAdmin);
+      setHasNoAdmins(false);
       setLoading(false);
+
+      return loadedAdmin;
+    } catch (error: any) {
+      setLoading(false);
+      throw error;
     }
   };
 
   const logout = async () => {
-    setLoading(true);
     try {
-      await signOut(auth);
+      localStorage.removeItem('prayer_app_code');
       setUser(null);
-      setFirebaseUser(null);
+      window.location.hash = '#/login';
     } catch (error) {
       console.error("Logout failed:", error);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const resetPassword = async (email: string) => {
-    try {
-      await sendPasswordResetEmail(auth, email);
-    } catch (error) {
-      console.error("Password reset failed:", error);
-      throw error;
-    }
-  };
-
-  // Transaction-based prayer logging with robust streak management
   const recordPrayerToday = async (): Promise<{ success: boolean; newStreak: number; alreadyPrayed: boolean }> => {
     if (!user) throw new Error("مستخدم غير مسجل الدخول");
 
@@ -301,17 +398,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (lastDate === yesterdayStr) {
           newStreak = userData.currentStreak + 1;
         } else if (lastDate === todayStr) {
-          // Double guard
           return { success: false, newStreak: userData.currentStreak, alreadyPrayed: true };
         } else {
-          // If they missed yesterday or it's their very first prayer
           newStreak = 1;
         }
 
         const newLongestStreak = Math.max(newStreak, userData.longestStreak || 0);
         const newTotalDays = (userData.totalPrayerDays || 0) + 1;
 
-        // Log the prayer document inside transaction
         transaction.set(prayerRef, {
           id: `${user.uid}_${todayStr}`,
           uid: user.uid,
@@ -319,7 +413,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           timestamp: new Date().toISOString()
         });
 
-        // Update the user statistics inside transaction
         transaction.update(userRef, {
           currentStreak: newStreak,
           longestStreak: newLongestStreak,
@@ -331,7 +424,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (result.success) {
-        // Update local user state immediately
         setUser(prev => prev ? {
           ...prev,
           currentStreak: result.newStreak,
@@ -343,7 +435,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return result;
     } catch (e) {
-      console.error("Error in recording prayer:", e);
+      handleFirestoreError(e, OperationType.WRITE, `userPrayers/${user.uid}_${todayStr}`);
       throw e;
     }
   };
@@ -351,16 +443,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return (
     <AuthContext.Provider value={{
       user,
-      firebaseUser,
       loading,
-      signInWithGoogle,
-      signInWithEmail,
-      signUpWithEmail,
-      loginAnonymously,
+      hasNoAdmins,
+      loginWithCode,
+      completeRegistration,
+      setupFirstAdmin,
       logout,
       recordPrayerToday,
-      refreshUser,
-      resetPassword
+      refreshUser
     }}>
       {children}
     </AuthContext.Provider>
