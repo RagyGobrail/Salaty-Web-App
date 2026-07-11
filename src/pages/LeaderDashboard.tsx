@@ -228,7 +228,7 @@ export const LeaderDashboard: React.FC = () => {
 
   // Delete User Document (and release code back to unused status)
   const handleDeleteUser = async (uid: string, name: string, code?: string) => {
-    if (!confirm(`تحذير هام! هل أنت متأكد من حذف حساب الطفل البطل (${name}) نهائياً؟ سيتم مسح بيانات تقدمه وسلسلة أيامه بالكامل.`)) return;
+    if (!confirm(`تحذير هام! هل أنت متأكد من حذف حساب (${name}) نهائياً؟ سيتم مسح بيانات تقدمه وسلسلة أيامه بالكامل.`)) return;
     try {
       await deleteDoc(doc(db, 'users', uid));
       
