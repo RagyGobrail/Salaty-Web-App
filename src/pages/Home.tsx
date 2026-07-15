@@ -52,10 +52,7 @@ export const Home: React.FC = () => {
   const [isFavorited, setIsFavorited] = useState(false);
   const [verseLoading, setVerseLoading] = useState(false);
   
-  // Daily Alarm/Reminder Settings
-  const [reminderHour, setReminderHour] = useState('20');
-  const [reminderMinute, setReminderMinute] = useState('00');
-  const [alarmSaved, setAlarmSaved] = useState(false);
+
 
   const todayStr = getLocalDateString();
   const weekDays = getDaysOfWeek();
@@ -104,7 +101,6 @@ export const Home: React.FC = () => {
     // Fetch user's week prayers
     if (user) {
       fetchWeekPrayers();
-      fetchReminderSetting();
     }
   }, [user]);
 
@@ -163,72 +159,7 @@ export const Home: React.FC = () => {
     }
   };
 
-  const fetchReminderSetting = async () => {
-    if (!user) return;
-    try {
-      const docRef = doc(db, 'settings', user.uid);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        const time = snap.data().reminderTime || '20:00';
-        const [h, m] = time.split(':');
-        setReminderHour(h || '20');
-        setReminderMinute(m || '00');
-      }
-    } catch (err) {
-      console.error("Error fetching settings:", err);
-    }
-  };
 
-  const adjustHour = (amount: number) => {
-    let current = parseInt(reminderHour) || 0;
-    let updated = (current + amount + 24) % 24;
-    setReminderHour(String(updated).padStart(2, '0'));
-  };
-
-  const adjustMinute = (amount: number) => {
-    let current = parseInt(reminderMinute) || 0;
-    let updated = (current + amount + 60) % 60;
-    setReminderMinute(String(updated).padStart(2, '0'));
-  };
-
-  const setPresetTime = async (hour: string, minute: string) => {
-    setReminderHour(hour);
-    setReminderMinute(minute);
-    
-    if (!user) return;
-    try {
-      const docRef = doc(db, 'settings', user.uid);
-      const timeStr = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-      await setDoc(docRef, {
-        uid: user.uid,
-        reminderTime: timeStr,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-      
-      setAlarmSaved(true);
-      setTimeout(() => setAlarmSaved(false), 3000);
-    } catch (err) {
-      console.error("Error saving preset alarm:", err);
-    }
-  };
-
-  const saveAlarmSettings = async () => {
-    if (!user) return;
-    try {
-      const docRef = doc(db, 'settings', user.uid);
-      const timeStr = `${reminderHour.padStart(2, '0')}:${reminderMinute.padStart(2, '0')}`;
-      await setDoc(docRef, {
-        uid: user.uid,
-        reminderTime: timeStr,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-      
-      setAlarmSaved(true);
-      setTimeout(() => setAlarmSaved(false), 3000);
-    } catch (err) {
-      console.error("Error saving alarm settings:", err);
-    }
-  };
 
   const handlePrayClick = async () => {
     if (!user || recording) return;
@@ -296,14 +227,7 @@ export const Home: React.FC = () => {
     }
   };
 
-  // Helper formatting for reminder
-  const formatArabicTime = (h: string, m: string) => {
-    const hr = parseInt(h);
-    const suffix = hr >= 12 ? 'مساءً' : 'صباحاً';
-    let displayHr = hr % 12;
-    if (displayHr === 0) displayHr = 12;
-    return `${displayHr}:${m} ${suffix}`;
-  };
+
 
   const copyVerse = () => {
     if (!activeVerse) return;
@@ -608,103 +532,7 @@ export const Home: React.FC = () => {
             </div>
           </div>
 
-          {/* Alarm Reminder card */}
-          <div className="glass-card p-6 flex flex-col gap-4 text-right">
-            <h3 className="text-sm font-black text-[#B8C7E0] border-b border-white/5 pb-2 flex justify-between items-center">
-              <span>⏰ منبّه صلاتي اليومي</span>
-              <span className="text-[#F39C3D] text-[11px] font-bold">
-                {formatArabicTime(reminderHour, reminderMinute)}
-              </span>
-            </h3>
 
-            {/* Big readable display with +/- controllers */}
-            <div className="flex items-center justify-center gap-6 py-2 bg-[#071426]/60 rounded-2xl border border-white/5">
-              
-              {/* Hour control */}
-              <div className="flex flex-col items-center gap-1">
-                <button 
-                  onClick={() => adjustHour(1)}
-                  className="w-8 h-8 rounded-full bg-white/5 hover:bg-[#F39C3D]/20 text-white hover:text-[#F39C3D] flex items-center justify-center font-bold text-lg duration-200"
-                >
-                  +
-                </button>
-                <span className="text-2xl font-black text-white font-mono">{reminderHour}</span>
-                <button 
-                  onClick={() => adjustHour(-1)}
-                  className="w-8 h-8 rounded-full bg-white/5 hover:bg-[#F39C3D]/20 text-white hover:text-[#F39C3D] flex items-center justify-center font-bold text-lg duration-200"
-                >
-                  -
-                </button>
-                <span className="text-[9px] text-[#B8C7E0]/50">الساعة</span>
-              </div>
-
-              <span className="text-2xl font-black text-white/50 mb-4 animate-pulse">:</span>
-
-              {/* Minute control */}
-              <div className="flex flex-col items-center gap-1">
-                <button 
-                  onClick={() => adjustMinute(5)}
-                  className="w-8 h-8 rounded-full bg-white/5 hover:bg-[#F39C3D]/20 text-white hover:text-[#F39C3D] flex items-center justify-center font-bold text-sm duration-200"
-                >
-                  +5
-                </button>
-                <span className="text-2xl font-black text-white font-mono">{reminderMinute}</span>
-                <button 
-                  onClick={() => adjustMinute(-5)}
-                  className="w-8 h-8 rounded-full bg-white/5 hover:bg-[#F39C3D]/20 text-white hover:text-[#F39C3D] flex items-center justify-center font-bold text-sm duration-200"
-                >
-                  -5
-                </button>
-                <span className="text-[9px] text-[#B8C7E0]/50">الدقيقة</span>
-              </div>
-
-            </div>
-
-            {/* Preset shortcuts */}
-            <div className="flex flex-col gap-2">
-              <span className="text-[10px] font-bold text-[#B8C7E0]/60 text-right">أوقات مقترحة سريعة:</span>
-              <div className="grid grid-cols-2 gap-2">
-                <button 
-                  onClick={() => setPresetTime('08', '00')}
-                  className="py-1.5 px-2 bg-white/5 hover:bg-amber-500/10 hover:border-amber-500/25 border border-white/5 rounded-xl text-[10px] font-bold text-[#B8C7E0] hover:text-white duration-200"
-                >
-                  🌅 8:00 صباحاً
-                </button>
-                <button 
-                  onClick={() => setPresetTime('15', '00')}
-                  className="py-1.5 px-2 bg-white/5 hover:bg-orange-500/10 hover:border-orange-500/25 border border-white/5 rounded-xl text-[10px] font-bold text-[#B8C7E0] hover:text-white duration-200"
-                >
-                  🏫 3:00 مساءً
-                </button>
-                <button 
-                  onClick={() => setPresetTime('20', '00')}
-                  className="py-1.5 px-2 bg-white/5 hover:bg-indigo-500/10 hover:border-indigo-500/25 border border-white/5 rounded-xl text-[10px] font-bold text-[#B8C7E0] hover:text-white duration-200"
-                >
-                  ⭐ 8:00 مساءً
-                </button>
-                <button 
-                  onClick={() => setPresetTime('21', '30')}
-                  className="py-1.5 px-2 bg-white/5 hover:bg-rose-500/10 hover:border-rose-500/25 border border-white/5 rounded-xl text-[10px] font-bold text-[#B8C7E0] hover:text-white duration-200"
-                >
-                  🌙 9:30 مساءً
-                </button>
-              </div>
-            </div>
-
-            {/* Manual Save Button */}
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={saveAlarmSettings}
-              className="w-full py-2.5 bg-gradient-to-r from-[#0E3D75] to-[#1255A1] hover:from-[#1255A1] hover:to-[#176BCB] text-white rounded-xl font-bold text-xs border border-white/10 flex items-center justify-center gap-1 cursor-pointer duration-300 shadow-sm"
-            >
-              {alarmSaved ? (
-                <span className="text-emerald-300 flex items-center gap-1">✔️ تم حفظ المنبه بنجاح!</span>
-              ) : (
-                <span>تأكيد وحفظ المنبه المخصص 💾</span>
-              )}
-            </motion.button>
-          </div>
 
         </div>
 

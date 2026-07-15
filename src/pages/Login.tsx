@@ -47,7 +47,7 @@ export const Login: React.FC = () => {
         } else {
           const userRole = result.user?.role || result.role || 'user';
           const destination = 
-            userRole === 'user' ? '/profile' :
+            userRole === 'user' ? '/dashboard' :
             userRole === 'servant' ? '/dashboard' :
             '/admin';
 
@@ -83,7 +83,7 @@ export const Login: React.FC = () => {
       
       const userRole = registeredUser?.role || 'user';
       const destination = 
-        userRole === 'user' ? '/profile' :
+        userRole === 'user' ? '/dashboard' :
         userRole === 'servant' ? '/dashboard' :
         '/admin';
 
